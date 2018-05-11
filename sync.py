@@ -31,67 +31,75 @@ def CheckPDF(lst):
     for pr in lst:
         m=GetMD5(pr[1])
         if(m in clst):
-            print('md5 same: ' + pr[0])
+            print('md5 same: ' + pr[0] + '. Skipped.')
         else:
             clst.append(m)
             flst.append([pr[0],pr[1],m])
     return flst
 
 def SyncPDF(uinfo,lst):
+    mbcalc=lambda x:round(x/1024/1024,2)
+
     ftp=FTP(uinfo[0])
     ftp.encoding='UTF-8'
     ftp.login(uinfo[1],uinfo[2])
+
     ftp.cwd('/md5')
-    mlst=ftp.nlst()
-    tlst=[]
-    upsz=0
+    remote_track_list=ftp.nlst()
+
+    to_upload_list=[]
+    to_upload_byte=0
     tmpid=0
     for name,addr,check in lst:
         tmpid=tmpid+1
-        if(check not in mlst):
+        if(check not in remote_track_list):
             print('[' + str(tmpid) + '][Untracked] ' + name)
-            tlst.append([name,addr,check])
-            upsz+=os.path.getsize(addr)
+            to_upload_list.append([name,addr,check])
+            to_upload_byte+=os.path.getsize(addr)
         else:
             print('[' + str(tmpid) + '][Synced] ' + name)
 
-    lsz=len(tlst)
-    if(lsz<1):
+    to_upload_cnt=len(to_upload_list)
+    if(to_upload_cnt<1):
         print('Nothing to upload.')
         return
 
-    print("Totoally " + str(lsz) + " files need to upload. Need to upload: " + str(round(upsz/1024/1024,2)) + 'MB')
+    print('Totoally ' + str(to_upload_cnt) + ' files need to upload. ' 
+        + 'Need to upload: ' + str(mbcalc(to_upload_byte)) + 'MB')
     choice=input('Are you sure to upload? (Y/N): ')
     if(choice!='Y'):
         print('Aborted.')
         return
 
     ftp.cwd('/')
-    fnlst=ftp.nlst()
+    remote_filename_list=ftp.nlst()
 
-    donesz=0
-    for i in range(lsz):
-        print('[' + str(i+1) + '/' + str(lsz) + '][Uploading] ' + tlst[i][0])
-        remote_filename=tlst[i][0]
-        while(remote_filename in fnlst):
+    uploaded_byte=0
+    for i in range(to_upload_cnt):
+        print('[' + str(i+1) + '/' + str(to_upload_cnt) + '][Uploading] ' 
+            + to_upload_list[i][0] + '...')
+        
+        # Adjust filename
+        remote_filename=to_upload_list[i][0]
+        while(remote_filename in remote_filename_list):
             remote_filename=remote_filename.replace(".pdf","_.pdf",1)
-        with open(tlst[i][1],'rb') as fp:
-            file_size=round(os.path.getsize(tlst[i][1])/1024/1024,2)
-            donesz+=os.path.getsize(tlst[i][1])
-            print('file size: ' + str(file_size) + 'MB')
+        
+        # Upload
+        with open(to_upload_list[i][1],'rb') as fp:
+            file_byte=os.path.getsize(to_upload_list[i][1])
+            print('file size: ' + str(mbcalc(file_byte)) + 'MB')
             ftp.storbinary('STOR '+remote_filename,fp)
-            print(str(round(donesz/1024/1024,2)) 
-                    + "MB uploaded. ("
-                    + str(round(donesz/upsz*100,2))
-                    + '%)' )
+            uploaded_byte+=file_byte
+            print(str(mbcalc(uploaded_byte)) + 'MB uploaded. ('
+                    + str(round(uploaded_byte/to_upload_byte*100,2)) + '%)')
 
             # MD5 file content must be utf-8
-            with open(tlst[i][2],'w',encoding='utf-8') as cf:
+            with open(to_upload_list[i][2],'w',encoding='utf-8') as cf:
                 cf.write(remote_filename)
-            with open(tlst[i][2],'rb') as cf:
-                ftp.storbinary('STOR /md5/'+tlst[i][2],cf)
-            print('Check file ' + tlst[i][2] + ' updated.')
-            os.remove(tlst[i][2])
+            with open(to_upload_list[i][2],'rb') as cf:
+                ftp.storbinary('STOR /md5/'+to_upload_list[i][2],cf)
+            print('Check file ' + to_upload_list[i][2] + ' updated.')
+            os.remove(to_upload_list[i][2])
 
 def FetchInfo():
     svaddr=input('Server Addr:')
@@ -102,10 +110,11 @@ def FetchInfo():
 # Main Program
 print("""PDF Sync Manager
 Author: Kiritow""")
-search_dir=input('Where should we start? :')
+search_dir=input('Enter root directory to search :')
 print ('Scanning...')
-cl=CheckPDF(ScanPDF(search_dir))
+tlst=ScanPDF(search_dir)
+clst=CheckPDF(tlst)
+print ('[Scan Result] ' + str(len(tlst)) + ' PDF found. ' + str(len(clst)) + ' unique PDF.')
 print ('Syncing...')
 uinfo=FetchInfo()
-SyncPDF(uinfo,cl)
-
+SyncPDF(uinfo,clst)
